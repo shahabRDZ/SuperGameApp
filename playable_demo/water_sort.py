@@ -1,7 +1,6 @@
 """
-Water Sort Puzzle - Playable Demo
-Part of SuperGameApp project
-Built with Pygame for desktop testing
+Water Sort Puzzle — Premium Edition
+Super Game App
 """
 
 import pygame
@@ -9,43 +8,293 @@ import sys
 import random
 import copy
 import math
-import colorsys
+import os
 
-# ─────────────────────────── CONFIG ───────────────────────────
+# ══════════════════════════════ INIT ══════════════════════════════
 
-SCREEN_WIDTH = 900
-SCREEN_HEIGHT = 750
+pygame.init()
+pygame.mixer.init()
+
+SW, SH = 480, 854  # Mobile aspect ratio (9:16)
 FPS = 60
-LAYERS_PER_TUBE = 4
+LAYERS = 4
 
-# Theme
-BG_TOP = (18, 18, 35)
-BG_BOTTOM = (8, 8, 18)
+screen = pygame.display.set_mode((SW, SH))
+pygame.display.set_caption("Water Sort Puzzle")
+clock = pygame.time.Clock()
 
-LIQUID_COLORS = {
-    1: (231, 76, 60),     # Red
-    2: (52, 152, 219),    # Blue
-    3: (46, 204, 113),    # Green
-    4: (241, 196, 15),    # Yellow
-    5: (230, 126, 34),    # Orange
-    6: (155, 89, 182),    # Purple
-    7: (26, 188, 156),    # Teal
-    8: (233, 30, 99),     # Pink
-    9: (121, 85, 72),     # Brown
-    10: (100, 181, 246),  # Light Blue
+# ══════════════════════════════ COLORS ══════════════════════════════
+
+COLORS = {
+    1:  (239, 83, 80),     # Red
+    2:  (66, 165, 245),    # Blue
+    3:  (102, 187, 106),   # Green
+    4:  (255, 213, 79),    # Yellow
+    5:  (255, 138, 101),   # Orange
+    6:  (171, 71, 188),    # Purple
+    7:  (38, 198, 218),    # Cyan
+    8:  (240, 98, 146),    # Pink
+    9:  (141, 110, 99),    # Brown
+    10: (120, 144, 156),   # Blue Grey
+    11: (174, 213, 129),   # Light Green
+    12: (255, 183, 77),    # Amber
 }
 
-LIQUID_HIGHLIGHTS = {}
-LIQUID_SHADOWS = {}
-for k, (r, g, b) in LIQUID_COLORS.items():
-    LIQUID_HIGHLIGHTS[k] = (min(255, r + 60), min(255, g + 60), min(255, b + 60))
-    LIQUID_SHADOWS[k] = (max(0, r - 40), max(0, g - 40), max(0, b - 40))
+def lighter(c, amt=40):
+    return tuple(min(255, x + amt) for x in c)
+
+def darker(c, amt=40):
+    return tuple(max(0, x - amt) for x in c)
+
+def alpha_surf(w, h):
+    return pygame.Surface((w, h), pygame.SRCALPHA)
+
+# ══════════════════════════════ FONTS ══════════════════════════════
+
+def get_font(size, bold=False):
+    names = ["SF Pro Display", "Helvetica Neue", "Helvetica", "Arial", "Segoe UI"]
+    for name in names:
+        try:
+            f = pygame.font.SysFont(name, size, bold=bold)
+            return f
+        except:
+            continue
+    return pygame.font.SysFont(None, size, bold=bold)
+
+FONT_HERO = get_font(48, True)
+FONT_TITLE = get_font(34, True)
+FONT_BIG = get_font(26, True)
+FONT_MED = get_font(20, True)
+FONT_SM = get_font(16)
+FONT_XS = get_font(13)
+FONT_XXS = get_font(11)
+
+# ══════════════════════════════ ASSETS (generated) ══════════════════════════════
+
+class Assets:
+    """Pre-rendered surfaces for performance."""
+
+    def __init__(self):
+        self.bg = self._make_bg()
+        self.tube_glass = {}  # cached per state
+        self.coin_icon = self._make_coin()
+        self.star_on = self._make_star((255, 215, 0), (255, 240, 100))
+        self.star_off = self._make_star((60, 63, 80), (80, 83, 100))
+
+    def _make_bg(self):
+        s = pygame.Surface((SW, SH))
+        # Gradient
+        c1 = (15, 18, 40)
+        c2 = (8, 10, 28)
+        for y in range(SH):
+            t = y / SH
+            r = int(c1[0] * (1-t) + c2[0] * t)
+            g = int(c1[1] * (1-t) + c2[1] * t)
+            b = int(c1[2] * (1-t) + c2[2] * t)
+            pygame.draw.line(s, (r, g, b), (0, y), (SW, y))
+
+        # Subtle radial vignette from center
+        vig = alpha_surf(SW, SH)
+        for radius in range(max(SW, SH), 0, -4):
+            alpha = max(0, min(30, int((1 - radius / max(SW, SH)) * 50)))
+            pygame.draw.circle(vig, (20, 25, 60, alpha), (SW//2, SH//3), radius)
+        s.blit(vig, (0, 0))
+        return s
+
+    def _make_coin(self):
+        s = alpha_surf(28, 28)
+        pygame.draw.circle(s, (255, 193, 7), (14, 14), 13)
+        pygame.draw.circle(s, (255, 215, 0), (14, 13), 11)
+        pygame.draw.circle(s, (255, 235, 59), (12, 11), 6)
+        # $ sign
+        txt = get_font(12, True).render("$", True, (200, 150, 0))
+        s.blit(txt, (14 - txt.get_width()//2, 14 - txt.get_height()//2))
+        pygame.draw.circle(s, (200, 160, 0), (14, 14), 13, 2)
+        return s
+
+    def _make_star(self, outer_c, inner_c):
+        size = 36
+        s = alpha_surf(size, size)
+        cx, cy = size // 2, size // 2
+        r_out, r_in = 16, 7
+        pts = []
+        for i in range(10):
+            a = math.radians(i * 36 - 90)
+            r = r_out if i % 2 == 0 else r_in
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+        pygame.draw.polygon(s, outer_c, pts)
+        # Inner glow
+        pts2 = []
+        for i in range(10):
+            a = math.radians(i * 36 - 90)
+            r = (r_out - 3) if i % 2 == 0 else (r_in - 1)
+            pts2.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+        pygame.draw.polygon(s, inner_c, pts2)
+        return s
+
+assets = Assets()
+
+# ══════════════════════════════ TUBE RENDERER ══════════════════════════════
+
+TW = 52        # tube width
+TH = 170       # tube height
+TInn = 5       # inner margin
+LH = 34        # layer height
+TBR = 20       # bottom radius
 
 
-# ─────────────────────────── LEVEL GENERATOR ───────────────────────────
+def render_tube(tube_data, selected=False, complete=False, pour_progress=None):
+    """Render a complete tube with liquid to a surface."""
+    pad = 14
+    w = TW + pad * 2
+    h = TH + pad * 2 + 20
+    s = alpha_surf(w, h)
+
+    ox, oy = pad, pad + 15  # tube origin within surface
+
+    # ── Selection glow ──
+    if selected:
+        glow = alpha_surf(w, h)
+        for r in range(24, 0, -2):
+            a = max(0, min(60, int(60 * (1 - r / 24))))
+            rect = pygame.Rect(ox - r, oy - r, TW + r*2, TH + r*2)
+            pygame.draw.rect(glow, (255, 200, 60, a), rect, border_radius=TBR + r)
+        s.blit(glow, (0, 0))
+
+    # ── Complete glow ──
+    if complete:
+        glow = alpha_surf(w, h)
+        for r in range(18, 0, -2):
+            a = max(0, min(40, int(40 * (1 - r / 18))))
+            rect = pygame.Rect(ox - r, oy - r, TW + r*2, TH + r*2)
+            pygame.draw.rect(glow, (76, 175, 80, a), rect, border_radius=TBR + r)
+        s.blit(glow, (0, 0))
+
+    # ── Glass tube shape ──
+    # We draw a U-shape: two vertical walls + rounded bottom
+    glass = alpha_surf(TW, TH)
+
+    # Fill inside with dark
+    pygame.draw.rect(glass, (22, 25, 42, 180), (0, 0, TW, TH), border_radius=TBR)
+    # Flatten top
+    pygame.draw.rect(glass, (22, 25, 42, 180), (0, 0, TW, 15))
+
+    s.blit(glass, (ox, oy))
+
+    # ── Liquid layers ──
+    for i, cid in enumerate(tube_data):
+        if cid <= 0:
+            continue
+        color = COLORS.get(cid, (128, 128, 128))
+        lx = ox + TInn
+        ly = oy + TH - (i + 1) * LH
+        lw = TW - TInn * 2
+        lh = LH - 1
+
+        # Bottom layer rounded
+        br = (TBR - 6) if i == 0 else 4
+
+        layer = alpha_surf(lw, lh)
+
+        # Gradient fill: lighter at top, base in middle, darker at bottom
+        lt = lighter(color, 35)
+        dk = darker(color, 25)
+        for row in range(lh):
+            t = row / max(1, lh - 1)
+            if t < 0.3:
+                # Top: light to base
+                tt = t / 0.3
+                r = int(lt[0] * (1-tt) + color[0] * tt)
+                g = int(lt[1] * (1-tt) + color[1] * tt)
+                b = int(lt[2] * (1-tt) + color[2] * tt)
+            else:
+                # Base to dark
+                tt = (t - 0.3) / 0.7
+                r = int(color[0] * (1-tt) + dk[0] * tt)
+                g = int(color[1] * (1-tt) + dk[1] * tt)
+                b = int(color[2] * (1-tt) + dk[2] * tt)
+            pygame.draw.line(layer, (r, g, b, 230), (0, row), (lw, row))
+
+        # Clip to rounded rect
+        mask = alpha_surf(lw, lh)
+        pygame.draw.rect(mask, (255, 255, 255), (0, 0, lw, lh), border_radius=br)
+        layer.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+
+        s.blit(layer, (lx, ly))
+
+        # Shine strip (left side)
+        shine = alpha_surf(6, lh - 4)
+        for row in range(shine.get_height()):
+            t = row / max(1, shine.get_height())
+            a = int(55 * math.sin(t * math.pi))
+            pygame.draw.line(shine, (255, 255, 255, a), (0, row), (5, row))
+        s.blit(shine, (lx + 3, ly + 2))
+
+        # Bubble dots for filled tubes
+        if lh > 10:
+            rng = random.Random(cid * 100 + i * 10)
+            for _ in range(2):
+                bx = rng.randint(4, lw - 4)
+                by = rng.randint(4, lh - 4)
+                ba = rng.randint(15, 40)
+                bs = rng.randint(2, 4)
+                pygame.draw.circle(s, (255, 255, 255, ba), (lx + bx, ly + by), bs)
+
+        # Top meniscus for topmost layer
+        if i == len(tube_data) - 1:
+            men = alpha_surf(lw, 5)
+            pygame.draw.ellipse(men, (*lighter(color, 50), 70), (0, 0, lw, 5))
+            s.blit(men, (lx, ly - 1))
+
+    # ── Glass walls (on top of liquid) ──
+    wall_color = (90, 95, 120) if not selected else (220, 190, 60)
+    if complete:
+        wall_color = (100, 190, 110)
+    wall_alpha = 200
+
+    wall = alpha_surf(TW, TH)
+
+    # Left wall
+    pygame.draw.line(wall, (*wall_color, wall_alpha), (1, 0), (1, TH - TBR), 2)
+    # Right wall
+    pygame.draw.line(wall, (*wall_color, wall_alpha), (TW - 2, 0), (TW - 2, TH - TBR), 2)
+    # Bottom arc
+    arc_rect = pygame.Rect(0, TH - TBR * 2, TW, TBR * 2)
+    pygame.draw.arc(wall, (*wall_color, wall_alpha), arc_rect, math.pi, 2 * math.pi, 2)
+
+    # Glass shine on left
+    for row in range(10, TH - 30):
+        t = (row - 10) / (TH - 40)
+        a = int(22 * math.sin(t * math.pi) * (1 - t * 0.5))
+        if a > 0:
+            pygame.draw.line(wall, (255, 255, 255, a), (4, row), (8, row))
+
+    # Glass shine on right (subtle)
+    for row in range(20, TH - 40):
+        t = (row - 20) / (TH - 60)
+        a = int(12 * math.sin(t * math.pi))
+        if a > 0:
+            pygame.draw.line(wall, (255, 255, 255, a), (TW - 8, row), (TW - 5, row))
+
+    s.blit(wall, (ox, oy))
+
+    # ── Completion badge ──
+    if complete:
+        badge_x = ox + TW // 2
+        badge_y = oy - 4
+        # Circle
+        pygame.draw.circle(s, (76, 175, 80), (badge_x, badge_y), 11)
+        pygame.draw.circle(s, (130, 220, 130), (badge_x, badge_y), 9)
+        # Checkmark
+        pts = [(badge_x - 5, badge_y), (badge_x - 1, badge_y + 4), (badge_x + 6, badge_y - 4)]
+        pygame.draw.lines(s, (255, 255, 255), False, pts, 3)
+
+    return s
+
+
+# ══════════════════════════════ LEVEL GENERATION ══════════════════════════════
 
 def get_difficulty(level):
-    """Returns (num_colors, num_empties) based on level."""
     if level <= 3:    return 3, 2
     if level <= 8:    return 4, 2
     if level <= 15:   return 5, 2
@@ -57,876 +306,749 @@ def get_difficulty(level):
 
 
 def generate_level(level_num):
-    """
-    Generate a solvable level by creating a flat pool of colors,
-    shuffling them, then distributing into tubes.
-    This guarantees the puzzle is solvable (since it came from a solved state).
-    """
     rng = random.Random(level_num * 31337 + 97)
     colors, empties = get_difficulty(level_num)
 
-    # Create pool: each color appears LAYERS_PER_TUBE times
     pool = []
     for c in range(1, colors + 1):
-        pool.extend([c] * LAYERS_PER_TUBE)
+        pool.extend([c] * LAYERS)
 
-    # Shuffle until no tube is already solved
-    for attempt in range(100):
+    for _ in range(200):
         rng.shuffle(pool)
-
-        tubes = []
-        for i in range(colors):
-            start = i * LAYERS_PER_TUBE
-            tube = pool[start:start + LAYERS_PER_TUBE]
-            tubes.append(tube)
-
-        # Check no tube is already single-color
-        any_solved = any(len(set(t)) == 1 for t in tubes)
-        if not any_solved:
+        tubes = [pool[i*LAYERS:(i+1)*LAYERS] for i in range(colors)]
+        if not any(len(set(t)) == 1 for t in tubes):
             break
 
-    # Add empty tubes
     for _ in range(empties):
         tubes.append([])
 
-    return tubes
+    return [list(t) for t in tubes]
 
 
-def is_tube_complete(tube):
-    return len(tube) == LAYERS_PER_TUBE and len(set(tube)) == 1
-
-
-def check_win(tubes):
-    for tube in tubes:
-        if tube and not is_tube_complete(tube):
-            return False
-    return True
-
-
-# ─────────────────────────── DRAWING HELPERS ───────────────────────────
-
-def draw_gradient_rect(surface, rect, color_top, color_bottom):
-    """Draw a vertical gradient filled rectangle."""
-    x, y, w, h = rect
-    for row in range(h):
-        t = row / max(1, h - 1)
-        r = int(color_top[0] * (1 - t) + color_bottom[0] * t)
-        g = int(color_top[1] * (1 - t) + color_bottom[1] * t)
-        b = int(color_top[2] * (1 - t) + color_bottom[2] * t)
-        pygame.draw.line(surface, (r, g, b), (x, y + row), (x + w - 1, y + row))
-
-
-def draw_rounded_rect(surface, color, rect, radius, alpha=255):
-    """Draw a rounded rectangle with optional alpha."""
-    if alpha < 255:
-        temp = pygame.Surface((rect[2], rect[3]), pygame.SRCALPHA)
-        pygame.draw.rect(temp, (*color, alpha), (0, 0, rect[2], rect[3]), border_radius=radius)
-        surface.blit(temp, (rect[0], rect[1]))
-    else:
-        pygame.draw.rect(surface, color, rect, border_radius=radius)
-
-
-def draw_star(surface, cx, cy, outer_r, inner_r, color, rotation=0):
-    """Draw a 5-pointed star."""
-    points = []
-    for i in range(10):
-        angle = math.radians(i * 36 - 90 + rotation)
-        r = outer_r if i % 2 == 0 else inner_r
-        points.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
-    pygame.draw.polygon(surface, color, points)
-    # Lighter outline
-    pygame.draw.polygon(surface, tuple(min(255, c + 30) for c in color), points, 2)
-
-
-# ─────────────────────────── PARTICLE SYSTEM ───────────────────────────
+# ══════════════════════════════ PARTICLES ══════════════════════════════
 
 class Particle:
-    def __init__(self, x, y, color, vx=None, vy=None, size=None, gravity=True):
+    __slots__ = ['x', 'y', 'vx', 'vy', 'life', 'decay', 'size', 'color', 'grav', 'shape']
+
+    def __init__(self, x, y, color, vx=None, vy=None, size=None, gravity=True, shape='circle'):
         self.x = x
         self.y = y
         self.color = color
-        self.vx = vx if vx is not None else random.uniform(-4, 4)
-        self.vy = vy if vy is not None else random.uniform(-8, -2)
+        self.vx = vx if vx is not None else random.uniform(-3, 3)
+        self.vy = vy if vy is not None else random.uniform(-7, -2)
         self.life = 1.0
-        self.max_life = random.uniform(0.8, 1.5)
-        self.size = size if size is not None else random.uniform(3, 8)
-        self.gravity = gravity
-        self.rotation = random.uniform(0, 360)
-        self.rot_speed = random.uniform(-200, 200)
+        self.decay = random.uniform(0.6, 1.2)
+        self.size = size or random.uniform(3, 7)
+        self.grav = gravity
+        self.shape = shape
 
     def update(self, dt):
         self.x += self.vx * 60 * dt
         self.y += self.vy * 60 * dt
-        if self.gravity:
-            self.vy += 12 * dt
-        self.life -= dt / self.max_life
-        self.rotation += self.rot_speed * dt
+        if self.grav:
+            self.vy += 10 * dt
+        self.life -= dt / self.decay
         return self.life > 0
 
-    def draw(self, surface):
-        alpha = max(0, min(255, int(self.life * 255)))
-        s = max(1, int(self.size * self.life))
-        if s < 1:
+    def draw(self, surf):
+        a = max(0, min(255, int(self.life * 255)))
+        s = max(1, int(self.size * max(0.3, self.life)))
+        if s < 1 or a < 5:
             return
-        temp = pygame.Surface((s * 2 + 2, s * 2 + 2), pygame.SRCALPHA)
-        pygame.draw.circle(temp, (*self.color[:3], alpha), (s + 1, s + 1), s)
-        # Glow
-        if s > 2:
-            pygame.draw.circle(temp, (*self.color[:3], alpha // 3), (s + 1, s + 1), s + 1)
-        surface.blit(temp, (int(self.x) - s - 1, int(self.y) - s - 1))
+        if self.shape == 'circle':
+            temp = alpha_surf(s*2+4, s*2+4)
+            pygame.draw.circle(temp, (*self.color, a), (s+2, s+2), s)
+            if s > 2:
+                pygame.draw.circle(temp, (*self.color, a//4), (s+2, s+2), s+2)
+            surf.blit(temp, (int(self.x)-s-2, int(self.y)-s-2))
+        elif self.shape == 'star':
+            temp = alpha_surf(s*4, s*4)
+            cx, cy = s*2, s*2
+            pts = []
+            rot = self.life * 200
+            for i in range(10):
+                ang = math.radians(i * 36 - 90 + rot)
+                r = s if i % 2 == 0 else s * 0.4
+                pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+            pygame.draw.polygon(temp, (*self.color, a), pts)
+            surf.blit(temp, (int(self.x)-s*2, int(self.y)-s*2))
+        elif self.shape == 'confetti':
+            temp = alpha_surf(s*3, s*3)
+            angle = self.life * 300
+            w = max(1, int(s * abs(math.sin(math.radians(angle)))))
+            h = max(1, int(s * 0.6))
+            rect = pygame.Rect(s*3//2 - w//2, s*3//2 - h//2, w, h)
+            pygame.draw.rect(temp, (*self.color, a), rect, border_radius=2)
+            surf.blit(temp, (int(self.x)-s*3//2, int(self.y)-s*3//2))
 
 
-# ─────────────────────────── BUTTON ───────────────────────────
+# ══════════════════════════════ UI COMPONENTS ══════════════════════════════
 
-class Button:
-    def __init__(self, x, y, w, h, text, font, color=(50, 55, 75), icon_text=None):
+class PillButton:
+    def __init__(self, x, y, w, h, text, color=(50, 55, 80), text_color=(220, 225, 240)):
         self.rect = pygame.Rect(x, y, w, h)
         self.text = text
-        self.font = font
-        self.base_color = color
-        self.hover_color = tuple(min(255, c + 25) for c in color)
-        self.press_color = tuple(max(0, c - 10) for c in color)
-        self.icon_text = icon_text
-        self.hovered = False
+        self.color = color
+        self.text_color = text_color
+        self.hover = False
+        self.press = False
         self.scale = 1.0
-        self.target_scale = 1.0
 
-    def update(self, mouse_pos, dt):
-        self.hovered = self.rect.collidepoint(mouse_pos)
-        self.target_scale = 1.05 if self.hovered else 1.0
-        self.scale += (self.target_scale - self.scale) * min(1, dt * 12)
+    def update(self, mouse, dt):
+        self.hover = self.rect.collidepoint(mouse)
+        target = 1.06 if self.hover else 1.0
+        self.scale += (target - self.scale) * min(1, dt * 14)
 
-    def draw(self, surface):
-        # Scaled rect
-        w = int(self.rect.width * self.scale)
-        h = int(self.rect.height * self.scale)
+    def draw(self, surf):
+        w = int(self.rect.w * self.scale)
+        h = int(self.rect.h * self.scale)
         x = self.rect.centerx - w // 2
         y = self.rect.centery - h // 2
-        r = pygame.Rect(x, y, w, h)
-
-        color = self.hover_color if self.hovered else self.base_color
+        r = h // 2
 
         # Shadow
-        shadow = pygame.Rect(x + 2, y + 3, w, h)
-        draw_rounded_rect(surface, (0, 0, 0), shadow, 10, 60)
+        sh = alpha_surf(w + 6, h + 6)
+        pygame.draw.rect(sh, (0, 0, 0, 50), (3, 4, w, h), border_radius=r)
+        surf.blit(sh, (x - 3, y - 2))
 
-        # Button body
-        draw_rounded_rect(surface, color, r, 10)
+        # Body
+        c = lighter(self.color, 18) if self.hover else self.color
+        body = alpha_surf(w, h)
+        pygame.draw.rect(body, (*c, 230), (0, 0, w, h), border_radius=r)
 
         # Top highlight
-        highlight = pygame.Rect(x + 2, y + 2, w - 4, h // 3)
-        draw_rounded_rect(surface, (255, 255, 255), highlight, 8, 15)
+        hl = alpha_surf(w - 8, h // 3)
+        pygame.draw.rect(hl, (255, 255, 255, 18), (0, 0, w - 8, h // 3), border_radius=r)
+        body.blit(hl, (4, 2))
+
+        surf.blit(body, (x, y))
 
         # Border
-        pygame.draw.rect(surface, tuple(min(255, c + 40) for c in color), r, 1, border_radius=10)
+        pygame.draw.rect(surf, (*lighter(c, 30), 120), (x, y, w, h), 1, border_radius=r)
 
         # Text
-        txt = self.font.render(self.text, True, (230, 232, 240))
-        tx = r.centerx - txt.get_width() // 2
-        ty = r.centery - txt.get_height() // 2
-        if self.icon_text:
-            icon = self.font.render(self.icon_text, True, (230, 232, 240))
-            total_w = icon.get_width() + 6 + txt.get_width()
-            tx = r.centerx - total_w // 2 + icon.get_width() + 6
-            surface.blit(icon, (r.centerx - total_w // 2, ty))
-        surface.blit(txt, (tx, ty))
+        txt = FONT_SM.render(self.text, True, self.text_color)
+        surf.blit(txt, (x + w//2 - txt.get_width()//2, y + h//2 - txt.get_height()//2))
 
     def clicked(self, pos):
         return self.rect.collidepoint(pos)
 
 
-# ─────────────────────────── TUBE DRAWING ───────────────────────────
+class BigButton:
+    def __init__(self, x, y, w, h, text, color, text_color=(255, 255, 255)):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.text = text
+        self.color = color
+        self.text_color = text_color
+        self.hover = False
+        self.scale = 1.0
 
-TUBE_WIDTH = 56
-TUBE_HEIGHT = 175
-TUBE_INNER = 6
-LAYER_H = 36
-TUBE_BOTTOM_RADIUS = 14
-TUBE_GLASS_COLOR = (45, 50, 70)
-TUBE_GLASS_BORDER = (75, 80, 105)
-TUBE_GLASS_SHINE = (255, 255, 255, 20)
+    def update(self, mouse, dt):
+        self.hover = self.rect.collidepoint(mouse)
+        target = 1.05 if self.hover else 1.0
+        self.scale += (target - self.scale) * min(1, dt * 14)
 
+    def draw(self, surf):
+        w = int(self.rect.w * self.scale)
+        h = int(self.rect.h * self.scale)
+        x = self.rect.centerx - w // 2
+        y = self.rect.centery - h // 2
+        r = 16
 
-def draw_tube_glass(surface, x, y, selected=False, complete=False):
-    """Draw the glass tube with shine effect."""
-    rect = pygame.Rect(x, y, TUBE_WIDTH, TUBE_HEIGHT)
+        # Shadow
+        sh = alpha_surf(w + 8, h + 8)
+        pygame.draw.rect(sh, (0, 0, 0, 70), (4, 5, w, h), border_radius=r)
+        surf.blit(sh, (x - 4, y - 3))
 
-    # Glow for selected
-    if selected:
-        glow = pygame.Surface((TUBE_WIDTH + 20, TUBE_HEIGHT + 30), pygame.SRCALPHA)
-        pygame.draw.rect(glow, (255, 220, 80, 35), (0, 0, TUBE_WIDTH + 20, TUBE_HEIGHT + 30),
-                         border_radius=TUBE_BOTTOM_RADIUS + 6)
-        surface.blit(glow, (x - 10, y - 10))
+        c = lighter(self.color, 15) if self.hover else self.color
+        # Body gradient
+        body = alpha_surf(w, h)
+        lt = lighter(c, 20)
+        dk = darker(c, 15)
+        for row in range(h):
+            t = row / max(1, h - 1)
+            rr = int(lt[0] * (1-t) + dk[0] * t)
+            gg = int(lt[1] * (1-t) + dk[1] * t)
+            bb = int(lt[2] * (1-t) + dk[2] * t)
+            pygame.draw.line(body, (rr, gg, bb), (0, row), (w, row))
+        mask = alpha_surf(w, h)
+        pygame.draw.rect(mask, (255, 255, 255), (0, 0, w, h), border_radius=r)
+        body.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        surf.blit(body, (x, y))
 
-    # Complete glow
-    if complete:
-        glow = pygame.Surface((TUBE_WIDTH + 16, TUBE_HEIGHT + 26), pygame.SRCALPHA)
-        pygame.draw.rect(glow, (80, 200, 120, 30), (0, 0, TUBE_WIDTH + 16, TUBE_HEIGHT + 26),
-                         border_radius=TUBE_BOTTOM_RADIUS + 4)
-        surface.blit(glow, (x - 8, y - 8))
+        # Top shine
+        shine = alpha_surf(w - 12, h // 3)
+        pygame.draw.rect(shine, (255, 255, 255, 30), (0, 0, w - 12, h // 3), border_radius=r)
+        surf.blit(shine, (x + 6, y + 3))
 
-    # Glass body
-    glass = pygame.Surface((TUBE_WIDTH, TUBE_HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(surf, (*lighter(c, 40), 100), (x, y, w, h), 1, border_radius=r)
 
-    # Main body
-    pygame.draw.rect(glass, (*TUBE_GLASS_COLOR, 200), (0, 0, TUBE_WIDTH, TUBE_HEIGHT),
-                     border_radius=TUBE_BOTTOM_RADIUS)
-    # Open top - draw rect to flatten top corners
-    pygame.draw.rect(glass, (*TUBE_GLASS_COLOR, 200), (0, 0, TUBE_WIDTH, 20))
+        txt = FONT_BIG.render(self.text, True, self.text_color)
+        surf.blit(txt, (x + w//2 - txt.get_width()//2, y + h//2 - txt.get_height()//2))
 
-    # Border
-    border_color = (255, 220, 80) if selected else ((120, 220, 150) if complete else TUBE_GLASS_BORDER)
-    # Left wall
-    pygame.draw.line(glass, (*border_color, 220), (0, 0), (0, TUBE_HEIGHT - TUBE_BOTTOM_RADIUS), 2)
-    # Right wall
-    pygame.draw.line(glass, (*border_color, 220), (TUBE_WIDTH - 1, 0),
-                     (TUBE_WIDTH - 1, TUBE_HEIGHT - TUBE_BOTTOM_RADIUS), 2)
-    # Bottom arc
-    pygame.draw.arc(glass, (*border_color, 220),
-                    (0, TUBE_HEIGHT - TUBE_BOTTOM_RADIUS * 2, TUBE_WIDTH, TUBE_BOTTOM_RADIUS * 2),
-                    math.pi, 2 * math.pi, 2)
-
-    # Shine on left side
-    shine = pygame.Surface((8, TUBE_HEIGHT - 30), pygame.SRCALPHA)
-    for row in range(shine.get_height()):
-        t = row / shine.get_height()
-        a = int(25 * (1 - abs(t - 0.3) * 2))
-        if a > 0:
-            pygame.draw.line(shine, (255, 255, 255, a), (0, row), (7, row))
-    glass.blit(shine, (4, 10))
-
-    surface.blit(glass, (x, y))
+    def clicked(self, pos):
+        return self.rect.collidepoint(pos)
 
 
-def draw_liquid_layer(surface, x, y, tube_x, tube_y, color_idx, layer_idx, total_layers):
-    """Draw a single liquid layer with gradient and shine."""
-    color = LIQUID_COLORS.get(color_idx, (128, 128, 128))
-    highlight = LIQUID_HIGHLIGHTS.get(color_idx, color)
-    shadow = LIQUID_SHADOWS.get(color_idx, color)
+# ══════════════════════════════ POUR ANIMATION ══════════════════════════════
 
-    lx = tube_x + TUBE_INNER
-    ly = tube_y + TUBE_HEIGHT - (layer_idx + 1) * LAYER_H
-    lw = TUBE_WIDTH - TUBE_INNER * 2
-    lh = LAYER_H - 1
-
-    # Bottom layer gets rounded bottom
-    radius = TUBE_BOTTOM_RADIUS - 4 if layer_idx == 0 else 3
-
-    layer_surf = pygame.Surface((lw, lh), pygame.SRCALPHA)
-
-    # Main fill with gradient
-    for row in range(lh):
-        t = row / max(1, lh - 1)
-        r = int(highlight[0] * (1 - t) * 0.3 + color[0] * (0.7 + t * 0.3))
-        g = int(highlight[1] * (1 - t) * 0.3 + color[1] * (0.7 + t * 0.3))
-        b = int(highlight[2] * (1 - t) * 0.3 + color[2] * (0.7 + t * 0.3))
-        r = max(0, min(255, r))
-        g = max(0, min(255, g))
-        b = max(0, min(255, b))
-        pygame.draw.line(layer_surf, (r, g, b, 240), (0, row), (lw - 1, row))
-
-    # Apply rounded rect mask
-    mask = pygame.Surface((lw, lh), pygame.SRCALPHA)
-    pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, lw, lh), border_radius=radius)
-
-    # Combine
-    final = pygame.Surface((lw, lh), pygame.SRCALPHA)
-    final.blit(layer_surf, (0, 0))
-    # Use mask
-    for px in range(lw):
-        for py in range(lh):
-            if mask.get_at((px, py))[3] == 0:
-                final.set_at((px, py), (0, 0, 0, 0))
-
-    surface.blit(final, (lx, ly))
-
-    # Shine strip
-    shine_surf = pygame.Surface((lw // 4, lh - 4), pygame.SRCALPHA)
-    pygame.draw.rect(shine_surf, (255, 255, 255, 40), (0, 0, lw // 4, lh - 4), border_radius=2)
-    surface.blit(shine_surf, (lx + 3, ly + 2))
-
-    # Top surface wave effect for topmost layer
-    if layer_idx == total_layers - 1:
-        wave_surf = pygame.Surface((lw, 4), pygame.SRCALPHA)
-        pygame.draw.rect(wave_surf, (*highlight, 80), (0, 0, lw, 4), border_radius=2)
-        surface.blit(wave_surf, (lx, ly))
-
-
-# ─────────────────────────── MAIN GAME CLASS ───────────────────────────
-
-class WaterSortGame:
+class PourAnim:
     def __init__(self):
-        pygame.init()
-        pygame.display.set_caption("Super Game App — Water Sort Puzzle")
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        self.clock = pygame.time.Clock()
+        self.active = False
+        self.phase = 0
+        self.t = 0.0
+        self.src = -1
+        self.dst = -1
+        self.offset = [0.0, 0.0]
+        self.done_pour = False
+        self.stream_particles = []
 
-        # Fonts
-        self.font_title = pygame.font.SysFont("Helvetica", 42, bold=True)
-        self.font_large = pygame.font.SysFont("Helvetica", 32, bold=True)
-        self.font_medium = pygame.font.SysFont("Helvetica", 22, bold=True)
-        self.font_small = pygame.font.SysFont("Helvetica", 17)
-        self.font_tiny = pygame.font.SysFont("Helvetica", 13)
+    def start(self, src, dst):
+        self.active = True
+        self.phase = 0
+        self.t = 0.0
+        self.src = src
+        self.dst = dst
+        self.offset = [0.0, 0.0]
+        self.done_pour = False
+        self.stream_particles = []
 
-        # Pre-render background
-        self.bg_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-        for y in range(SCREEN_HEIGHT):
-            t = y / SCREEN_HEIGHT
-            r = int(BG_TOP[0] * (1 - t) + BG_BOTTOM[0] * t)
-            g = int(BG_TOP[1] * (1 - t) + BG_BOTTOM[1] * t)
-            b = int(BG_TOP[2] * (1 - t) + BG_BOTTOM[2] * t)
-            pygame.draw.line(self.bg_surface, (r, g, b), (0, y), (SCREEN_WIDTH, y))
+    def ease(self, t):
+        t = max(0, min(1, t))
+        return t * t * (3 - 2 * t)
 
-        # Game state
-        self.state = "menu"  # menu, playing, complete
+    def update(self, dt, positions, tubes, do_pour_fn):
+        if not self.active:
+            return False
+
+        speed = 4.0
+        self.t += dt * speed
+        t = self.ease(min(1, self.t))
+
+        sx, sy = positions[self.src]
+        dx, dy = positions[self.dst]
+
+        if self.phase == 0:  # Lift
+            self.offset = [0, -60 * t]
+            if self.t >= 1:
+                self.phase = 1
+                self.t = 0
+
+        elif self.phase == 1:  # Slide over
+            target_x = (dx - sx) + (28 if dx > sx else -28)
+            self.offset = [target_x * t, -60]
+            if self.t >= 1:
+                self.phase = 2
+                self.t = 0
+
+        elif self.phase == 2:  # Tilt + pour
+            target_x = (dx - sx) + (28 if dx > sx else -28)
+            self.offset = [target_x, -60]
+            if not self.done_pour and self.t >= 0.3:
+                do_pour_fn()
+                self.done_pour = True
+                # Stream particles
+                px = dx + TW // 2
+                py = dy
+                if tubes[self.dst]:
+                    c = COLORS.get(tubes[self.dst][-1], (200, 200, 200))
+                    for _ in range(12):
+                        self.stream_particles.append(
+                            Particle(px + random.randint(-8, 8), py + random.randint(-5, 15),
+                                     c, random.uniform(-1.5, 1.5), random.uniform(-4, -1),
+                                     random.uniform(2, 5)))
+            if self.t >= 0.8:
+                self.phase = 3
+                self.t = 0
+
+        elif self.phase == 3:  # Return
+            target_x = (dx - sx) + (28 if dx > sx else -28)
+            self.offset = [target_x * (1 - t), -60 * (1 - t)]
+            if self.t >= 1:
+                self.active = False
+                self.offset = [0, 0]
+                return True  # completed
+
+        # Update stream particles
+        self.stream_particles = [p for p in self.stream_particles if p.update(dt)]
+        return False
+
+    def draw_particles(self, surf):
+        for p in self.stream_particles:
+            p.draw(surf)
+
+
+# ══════════════════════════════ GAME ══════════════════════════════
+
+class Game:
+    def __init__(self):
+        self.state = "menu"
         self.level = 1
         self.coins = 100
         self.moves = 0
         self.selected = -1
         self.tubes = []
         self.undo_stack = []
-        self.tube_positions = []
+        self.positions = []
         self.particles = []
+        self.pour = PourAnim()
         self.buttons = {}
-        self.selected_offset_y = 0.0
-        self.target_offset_y = 0.0
-        self.win_timer = 0
-        self.menu_anim = 0
+        self.win_t = 0
+        self.menu_t = 0
+        self.tube_cache = {}  # rendered tube cache
 
-        # Pour animation
-        self.pouring = False
-        self.pour_from = -1
-        self.pour_to = -1
-        self.pour_phase = 0
-        self.pour_t = 0.0
-        self.pour_source_offset = [0.0, 0.0]
-        self.pour_data = []
-
-    def load_level(self, level_num):
-        self.level = level_num
-        self.tubes = generate_level(level_num)
+    def load_level(self, n):
+        self.level = n
+        self.tubes = generate_level(n)
         self.moves = 0
         self.selected = -1
         self.undo_stack = []
         self.particles = []
         self.state = "playing"
-        self.pouring = False
-        self.win_timer = 0
-        self.calculate_positions()
-        self.create_buttons()
+        self.pour.active = False
+        self.win_t = 0
+        self.tube_cache = {}
+        self._layout()
+        self._make_buttons()
 
-    def calculate_positions(self):
-        self.tube_positions = []
+    def _layout(self):
+        self.positions = []
         n = len(self.tubes)
-        max_per_row = min(n, 6)
-        rows = math.ceil(n / max_per_row)
-
-        base_y = 160
+        per_row = min(n, 5)
+        rows = math.ceil(n / per_row)
+        spacing = TW + 22
 
         for i in range(n):
-            row = i // max_per_row
-            col = i % max_per_row
-            tubes_in_row = min(max_per_row, n - row * max_per_row)
+            r = i // per_row
+            c = i % per_row
+            in_row = min(per_row, n - r * per_row)
+            tw = in_row * spacing - 22
+            sx = (SW - tw) // 2
+            x = sx + c * spacing
+            y = 150 + r * (TH + 55)
+            self.positions.append((x, y))
 
-            spacing = TUBE_WIDTH + 28
-            total_w = tubes_in_row * spacing - 28
-            start_x = (SCREEN_WIDTH - total_w) // 2
-
-            x = start_x + col * spacing
-            y = base_y + row * (TUBE_HEIGHT + 55)
-            self.tube_positions.append([x, y])
-
-    def create_buttons(self):
-        btn_y = SCREEN_HEIGHT - 75
-        btn_w = 120
-        btn_h = 44
-        gap = 16
-        total = btn_w * 4 + gap * 3
-        sx = (SCREEN_WIDTH - total) // 2
-
+    def _make_buttons(self):
+        y = SH - 75
+        bw, bh = 90, 38
+        gap = 10
+        total = bw * 4 + gap * 3
+        sx = (SW - total) // 2
         self.buttons = {
-            "undo": Button(sx, btn_y, btn_w, btn_h, "Undo", self.font_small, (55, 60, 85)),
-            "restart": Button(sx + (btn_w + gap), btn_y, btn_w, btn_h, "Restart", self.font_small, (55, 60, 85)),
-            "hint": Button(sx + (btn_w + gap) * 2, btn_y, btn_w, btn_h, "Hint", self.font_small, (70, 55, 85)),
-            "menu": Button(sx + (btn_w + gap) * 3, btn_y, btn_w, btn_h, "Menu", self.font_small, (55, 60, 85)),
+            'undo': PillButton(sx, y, bw, bh, "Undo"),
+            'restart': PillButton(sx + bw + gap, y, bw, bh, "Restart"),
+            'hint': PillButton(sx + (bw+gap)*2, y, bw, bh, "Hint", (65, 50, 85)),
+            'back': PillButton(sx + (bw+gap)*3, y, bw, bh, "Menu"),
         }
 
+    def _tube_key(self, idx):
+        t = self.tubes[idx]
+        sel = (idx == self.selected and not self.pour.active)
+        comp = len(t) == LAYERS and len(set(t)) == 1 if t else False
+        return (tuple(t), sel, comp)
+
+    def get_tube_surf(self, idx):
+        key = self._tube_key(idx)
+        if key not in self.tube_cache:
+            t = self.tubes[idx]
+            sel = (idx == self.selected and not self.pour.active)
+            comp = len(t) == LAYERS and len(set(t)) == 1 if t else False
+            self.tube_cache[key] = render_tube(t, sel, comp)
+        return self.tube_cache[key]
+
     def get_tube_at(self, mx, my):
-        for i, (tx, ty) in enumerate(self.tube_positions):
-            r = pygame.Rect(tx - 8, ty - 15, TUBE_WIDTH + 16, TUBE_HEIGHT + 30)
-            if r.collidepoint(mx, my):
+        for i, (tx, ty) in enumerate(self.positions):
+            if pygame.Rect(tx - 10, ty - 20, TW + 20, TH + 40).collidepoint(mx, my):
                 return i
         return -1
 
-    def can_pour(self, source_idx, target_idx):
-        source = self.tubes[source_idx]
-        target = self.tubes[target_idx]
-        if not source:
-            return False
-        if len(target) >= LAYERS_PER_TUBE:
-            return False
-        if not target:
-            return True
-        return source[-1] == target[-1]
+    def can_pour(self, s, d):
+        src, dst = self.tubes[s], self.tubes[d]
+        if not src: return False
+        if len(dst) >= LAYERS: return False
+        if not dst: return True
+        return src[-1] == dst[-1]
 
-    def do_pour(self, source_idx, target_idx):
-        source = self.tubes[source_idx]
-        target = self.tubes[target_idx]
-
+    def do_pour(self, s, d):
+        src, dst = self.tubes[s], self.tubes[d]
         self.undo_stack.append(copy.deepcopy(self.tubes))
-
-        top_color = source[-1]
-        moved = 0
-        while source and source[-1] == top_color and len(target) < LAYERS_PER_TUBE:
-            target.append(source.pop())
-            moved += 1
-
+        top = src[-1]
+        while src and src[-1] == top and len(dst) < LAYERS:
+            dst.append(src.pop())
         self.moves += 1
-        return moved
-
-    def start_pour_animation(self, from_idx, to_idx):
-        self.pouring = True
-        self.pour_from = from_idx
-        self.pour_to = to_idx
-        self.pour_phase = 0  # 0=lift, 1=move, 2=pour+transfer, 3=return
-        self.pour_t = 0.0
-        self.pour_source_offset = [0.0, 0.0]
-
-    def update_pour(self, dt):
-        if not self.pouring:
-            return
-
-        speed = 4.5
-        self.pour_t += dt * speed
-
-        sx, sy = self.tube_positions[self.pour_from]
-        tx, ty = self.tube_positions[self.pour_to]
-
-        t = min(1.0, self.pour_t)
-        t = t * t * (3 - 2 * t)  # smoothstep
-
-        if self.pour_phase == 0:  # Lift
-            self.pour_source_offset = [0, -55 * t]
-            if self.pour_t >= 1.0:
-                self.pour_phase = 1
-                self.pour_t = 0.0
-
-        elif self.pour_phase == 1:  # Move horizontally
-            dx = (tx - sx) + (25 if tx > sx else -25)
-            self.pour_source_offset = [dx * t, -55]
-            if self.pour_t >= 1.0:
-                self.pour_phase = 2
-                self.pour_t = 0.0
-                # Do the actual pour
-                self.do_pour(self.pour_from, self.pour_to)
-                # Spawn pour particles
-                px = tx + TUBE_WIDTH // 2
-                py = ty
-                color = LIQUID_COLORS.get(self.tubes[self.pour_to][-1], (200, 200, 200))
-                for _ in range(8):
-                    self.particles.append(Particle(px + random.randint(-10, 10), py,
-                                                   color, random.uniform(-1, 1),
-                                                   random.uniform(-3, 0), random.uniform(2, 5)))
-
-        elif self.pour_phase == 2:  # Wait a beat
-            dx = (tx - sx) + (25 if tx > sx else -25)
-            self.pour_source_offset = [dx, -55]
-            if self.pour_t >= 0.5:
-                self.pour_phase = 3
-                self.pour_t = 0.0
-
-        elif self.pour_phase == 3:  # Return
-            dx = (tx - sx) + (25 if tx > sx else -25)
-            self.pour_source_offset = [dx * (1 - t), -55 * (1 - t)]
-            if self.pour_t >= 1.0:
-                self.pouring = False
-                self.pour_source_offset = [0, 0]
-                # Check win
-                if check_win(self.tubes):
-                    self.state = "complete"
-                    self.win_timer = 0
-                    self.spawn_win_particles()
+        self.tube_cache = {}
 
     def undo(self):
-        if not self.undo_stack or self.pouring:
+        if not self.undo_stack or self.pour.active:
             return
         self.tubes = self.undo_stack.pop()
         self.moves = max(0, self.moves - 1)
         self.selected = -1
+        self.tube_cache = {}
 
-    def spawn_win_particles(self):
-        for _ in range(80):
-            x = random.randint(50, SCREEN_WIDTH - 50)
-            y = random.randint(100, SCREEN_HEIGHT - 100)
-            c = random.choice(list(LIQUID_COLORS.values()))
-            self.particles.append(Particle(x, y, c,
-                                           random.uniform(-5, 5),
-                                           random.uniform(-10, -3),
-                                           random.uniform(4, 10)))
+    def check_win(self):
+        return all(
+            (not t) or (len(t) == LAYERS and len(set(t)) == 1)
+            for t in self.tubes
+        )
 
-    def calculate_stars(self):
-        colors, _ = get_difficulty(self.level)
-        optimal = colors * 2
-        if self.moves <= optimal:
-            return 3
-        if self.moves <= optimal * 2:
-            return 2
+    def calc_stars(self):
+        c, _ = get_difficulty(self.level)
+        opt = c * 2
+        if self.moves <= opt: return 3
+        if self.moves <= opt * 2: return 2
         return 1
 
-    # ─── DRAW METHODS ───
+    def spawn_win(self):
+        confetti_colors = [(255,107,107), (78,205,196), (255,230,109),
+                           (162,155,254), (255,159,243), (69,183,209),
+                           (255,177,66), (150,206,180)]
+        for _ in range(100):
+            c = random.choice(confetti_colors)
+            shape = random.choice(['confetti', 'star', 'circle'])
+            self.particles.append(Particle(
+                random.randint(20, SW-20), random.randint(-50, SH//2),
+                c, random.uniform(-3, 3), random.uniform(-5, 2),
+                random.uniform(4, 10), shape=shape))
 
-    def draw_bg(self):
-        self.screen.blit(self.bg_surface, (0, 0))
+    # ─── DRAWING ───
 
-    def draw_top_bar(self):
-        # Bar background
-        bar = pygame.Surface((SCREEN_WIDTH, 75), pygame.SRCALPHA)
-        bar.fill((20, 22, 40, 230))
-        self.screen.blit(bar, (0, 0))
-        pygame.draw.line(self.screen, (50, 55, 75), (0, 75), (SCREEN_WIDTH, 75), 1)
+    def draw_topbar(self):
+        # Bar bg
+        bar = alpha_surf(SW, 80)
+        for y in range(80):
+            a = int(220 * (1 - y / 120))
+            pygame.draw.line(bar, (15, 18, 38, a), (0, y), (SW, y))
+        screen.blit(bar, (0, 0))
 
         # Level
         colors, _ = get_difficulty(self.level)
-        diff_map = {3: "Easy", 4: "Normal", 5: "Medium", 6: "Hard", 7: "Expert",
-                    8: "Master", 9: "Insane", 10: "Legendary"}
-        diff = diff_map.get(colors, "")
+        diffs = {3:"Easy",4:"Normal",5:"Medium",6:"Hard",7:"Expert",8:"Master",9:"Insane",10:"Legendary"}
+        diff_colors = {3:(130,200,130),4:(130,180,220),5:(220,200,100),6:(230,150,80),
+                       7:(220,100,100),8:(200,80,180),9:(180,60,60),10:(255,215,0)}
 
-        level_text = self.font_large.render(f"Level {self.level}", True, (230, 232, 245))
-        self.screen.blit(level_text, (30, 12))
+        lt = FONT_BIG.render(f"Level {self.level}", True, (230, 235, 250))
+        screen.blit(lt, (20, 14))
 
-        diff_text = self.font_tiny.render(diff, True, (140, 145, 170))
-        self.screen.blit(diff_text, (30, 48))
+        dc = diff_colors.get(colors, (150,150,150))
+        dt_surf = FONT_XS.render(diffs.get(colors, ""), True, dc)
+        screen.blit(dt_surf, (20, 46))
 
         # Moves
-        moves_text = self.font_medium.render(f"Moves: {self.moves}", True, (180, 185, 200))
-        mx = SCREEN_WIDTH // 2 - moves_text.get_width() // 2
-        self.screen.blit(moves_text, (mx, 25))
+        mt = FONT_MED.render(f"Moves: {self.moves}", True, (160, 165, 185))
+        screen.blit(mt, (SW//2 - mt.get_width()//2, 28))
 
         # Coins
-        coin_x = SCREEN_WIDTH - 130
-        pygame.draw.circle(self.screen, (255, 215, 0), (coin_x, 38), 14)
-        pygame.draw.circle(self.screen, (200, 170, 0), (coin_x, 38), 14, 2)
-        # $ symbol
-        dollar = self.font_tiny.render("$", True, (180, 150, 0))
-        self.screen.blit(dollar, (coin_x - dollar.get_width() // 2, 31))
+        screen.blit(assets.coin_icon, (SW - 110, 22))
+        ct = FONT_MED.render(str(self.coins), True, (255, 215, 0))
+        screen.blit(ct, (SW - 78, 26))
 
-        coin_text = self.font_medium.render(str(self.coins), True, (255, 215, 0))
-        self.screen.blit(coin_text, (coin_x + 20, 24))
+    def draw_playing(self, dt):
+        screen.blit(assets.bg, (0, 0))
+        self.draw_topbar()
 
-    def draw_tubes(self, dt):
-        for i, tube in enumerate(self.tubes):
-            tx, ty = self.tube_positions[i]
+        # Tubes
+        pad = 14
+        for i in range(len(self.tubes)):
+            tx, ty = self.positions[i]
+            ox, oy = 0, 0
 
-            # Apply pour offset
-            offset_x, offset_y = 0, 0
-            if self.pouring and self.pour_from == i:
-                offset_x = self.pour_source_offset[0]
-                offset_y = self.pour_source_offset[1]
+            if self.pour.active and self.pour.src == i:
+                ox = self.pour.offset[0]
+                oy = self.pour.offset[1]
+            elif i == self.selected and not self.pour.active:
+                oy = -18
 
-            # Selection bounce
-            if i == self.selected and not self.pouring:
-                offset_y = -22
+            surf = self.get_tube_surf(i)
+            screen.blit(surf, (tx - pad + ox, ty - pad - 15 + oy))
 
-            dx = tx + offset_x
-            dy = ty + offset_y
-
-            complete = is_tube_complete(tube)
-            selected = (i == self.selected and not self.pouring)
-
-            # Draw glass
-            draw_tube_glass(self.screen, int(dx), int(dy), selected, complete)
-
-            # Draw liquid layers
-            for li, color_idx in enumerate(tube):
-                draw_liquid_layer(self.screen, 0, 0, int(dx), int(dy), color_idx, li, len(tube))
-
-            # Complete checkmark
-            if complete:
-                cx = int(dx) + TUBE_WIDTH // 2
-                cy = int(dy) - 12
-                pygame.draw.circle(self.screen, (80, 200, 120), (cx, cy), 11)
-                pygame.draw.circle(self.screen, (60, 170, 100), (cx, cy), 11, 2)
-                check = self.font_tiny.render("✓", True, (255, 255, 255))
-                self.screen.blit(check, (cx - check.get_width() // 2, cy - check.get_height() // 2))
-
-    def draw_complete_screen(self, dt):
-        self.win_timer += dt
-
-        # Dark overlay
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        alpha = min(170, int(self.win_timer * 400))
-        overlay.fill((0, 0, 0, alpha))
-        self.screen.blit(overlay, (0, 0))
-
-        if self.win_timer < 0.3:
-            return None, None
-
-        # Panel
-        pw, ph = 420, 370
-        px = (SCREEN_WIDTH - pw) // 2
-        py = (SCREEN_HEIGHT - ph) // 2
-
-        # Panel shadow
-        draw_rounded_rect(self.screen, (0, 0, 0), (px + 4, py + 6, pw, ph), 20, 100)
-
-        # Panel body
-        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        draw_gradient_rect(panel, (0, 0, pw, ph), (40, 45, 70), (25, 28, 48))
-        # Round the corners
-        mask = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        pygame.draw.rect(mask, (255, 255, 255), (0, 0, pw, ph), border_radius=20)
-        final_panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        final_panel.blit(panel, (0, 0))
-        for x_p in range(pw):
-            for y_p in range(ph):
-                if mask.get_at((x_p, y_p))[3] == 0:
-                    final_panel.set_at((x_p, y_p), (0, 0, 0, 0))
-        self.screen.blit(final_panel, (px, py))
-        pygame.draw.rect(self.screen, (70, 75, 100), (px, py, pw, ph), 2, border_radius=20)
-
-        # Title
-        title = self.font_large.render("Level Complete!", True, (80, 220, 130))
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, py + 30))
-
-        # Stars
-        stars = self.calculate_stars()
-        star_y = py + 95
-        for i in range(3):
-            star_x = SCREEN_WIDTH // 2 - 65 + i * 55
-            if i < stars:
-                draw_star(self.screen, star_x, star_y, 22, 9, (255, 210, 50))
-            else:
-                draw_star(self.screen, star_x, star_y, 22, 9, (50, 55, 70))
-
-        # Stats
-        moves_t = self.font_medium.render(f"Moves: {self.moves}", True, (200, 205, 220))
-        self.screen.blit(moves_t, (SCREEN_WIDTH // 2 - moves_t.get_width() // 2, py + 140))
-
-        reward = stars * 10
-        reward_t = self.font_medium.render(f"+ {reward} coins", True, (255, 215, 0))
-        self.screen.blit(reward_t, (SCREEN_WIDTH // 2 - reward_t.get_width() // 2, py + 175))
-
-        # Buttons
-        btn_w, btn_h = 160, 48
-        gap = 20
-        bx1 = SCREEN_WIDTH // 2 - btn_w - gap // 2
-        bx2 = SCREEN_WIDTH // 2 + gap // 2
-        by = py + 255
-
-        mouse = pygame.mouse.get_pos()
-
-        next_rect = pygame.Rect(bx1, by, btn_w, btn_h)
-        replay_rect = pygame.Rect(bx2, by, btn_w, btn_h)
-
-        for rect, text, base_c in [(next_rect, "Next Level", (60, 180, 100)),
-                                    (replay_rect, "Replay", (55, 65, 95))]:
-            hovered = rect.collidepoint(mouse)
-            c = tuple(min(255, x + 20) for x in base_c) if hovered else base_c
-
-            draw_rounded_rect(self.screen, (0, 0, 0), (rect.x + 2, rect.y + 3, btn_w, btn_h), 12, 60)
-            draw_rounded_rect(self.screen, c, rect, 12)
-            pygame.draw.rect(self.screen, tuple(min(255, x + 30) for x in c), rect, 1, border_radius=12)
-
-            t = self.font_medium.render(text, True, (240, 242, 250))
-            self.screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
-
-        return next_rect, replay_rect
-
-    def draw_menu(self, dt):
-        self.draw_bg()
-        self.menu_anim += dt
-
-        # Floating particles in background
-        if random.random() < 0.1:
-            c = random.choice(list(LIQUID_COLORS.values()))
-            self.particles.append(Particle(
-                random.randint(0, SCREEN_WIDTH), SCREEN_HEIGHT + 10,
-                c, random.uniform(-0.5, 0.5), random.uniform(-1.5, -0.5),
-                random.uniform(2, 5), gravity=False
-            ))
-
-        # Title
-        title = self.font_title.render("Water Sort", True, (230, 235, 250))
-        subtitle = self.font_large.render("Puzzle", True, (100, 180, 230))
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 130))
-        self.screen.blit(subtitle, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, 180))
-
-        # Animated preview tubes
-        preview_colors = [1, 2, 3, 4, 5]
-        for i, ci in enumerate(preview_colors):
-            tx = 160 + i * 120
-            ty = 270 + int(math.sin(self.menu_anim * 2 + i * 0.8) * 8)
-            draw_tube_glass(self.screen, tx, ty, False, False)
-            c = LIQUID_COLORS[ci]
-            for j in range(LAYERS_PER_TUBE):
-                draw_liquid_layer(self.screen, 0, 0, tx, ty, ci, j, LAYERS_PER_TUBE)
-
-        # Super Game App badge
-        badge = self.font_tiny.render("SUPER GAME APP", True, (100, 105, 130))
-        self.screen.blit(badge, (SCREEN_WIDTH // 2 - badge.get_width() // 2, 245))
-
-        # Play button
-        play_rect = pygame.Rect(SCREEN_WIDTH // 2 - 110, 510, 220, 60)
-        mouse = pygame.mouse.get_pos()
-        hovered = play_rect.collidepoint(mouse)
-        scale = 1.05 if hovered else 1.0
-        pw = int(220 * scale)
-        ph = int(60 * scale)
-        pr = pygame.Rect(SCREEN_WIDTH // 2 - pw // 2, 510 + 30 - ph // 2, pw, ph)
-
-        draw_rounded_rect(self.screen, (0, 0, 0), (pr.x + 3, pr.y + 4, pw, ph), 14, 80)
-        base_green = (65, 190, 110) if not hovered else (85, 210, 130)
-        draw_rounded_rect(self.screen, base_green, pr, 14)
-        pygame.draw.rect(self.screen, (100, 230, 150), pr, 1, border_radius=14)
-
-        play_text = self.font_large.render("PLAY", True, (255, 255, 255))
-        self.screen.blit(play_text, (pr.centerx - play_text.get_width() // 2,
-                                     pr.centery - play_text.get_height() // 2))
-
-        # Level indicator
-        lvl_text = self.font_small.render(f"Level {self.level}", True, (140, 145, 170))
-        self.screen.blit(lvl_text, (SCREEN_WIDTH // 2 - lvl_text.get_width() // 2, 590))
-
-        # Coins
-        coin_text = self.font_small.render(f"Coins: {self.coins}", True, (255, 215, 0))
-        self.screen.blit(coin_text, (SCREEN_WIDTH // 2 - coin_text.get_width() // 2, 620))
-
-        # Footer
-        footer = self.font_tiny.render("Built with Python + Pygame", True, (50, 55, 75))
-        self.screen.blit(footer, (SCREEN_WIDTH // 2 - footer.get_width() // 2, SCREEN_HEIGHT - 30))
+        # Pour stream particles
+        if self.pour.active:
+            self.pour.draw_particles(screen)
 
         # Particles
         for p in self.particles:
-            p.draw(self.screen)
+            p.draw(screen)
 
-        return play_rect
+        # Buttons
+        mouse = pygame.mouse.get_pos()
+        for b in self.buttons.values():
+            b.update(mouse, dt)
+            b.draw(screen)
+
+        # Hint
+        h = FONT_XXS.render("U=Undo  R=Restart  ESC=Menu", True, (40, 44, 65))
+        screen.blit(h, (SW//2 - h.get_width()//2, SH - 28))
+
+    def draw_complete(self, dt):
+        self.win_t += dt
+
+        # Overlay
+        ov = alpha_surf(SW, SH)
+        a = min(180, int(self.win_t * 500))
+        ov.fill((0, 0, 0, a))
+        screen.blit(ov, (0, 0))
+
+        if self.win_t < 0.25:
+            return None, None
+
+        # Panel
+        pw, ph = 360, 380
+        px = (SW - pw) // 2
+        py = (SH - ph) // 2 - 20
+
+        # Panel shadow
+        sh = alpha_surf(pw + 10, ph + 10)
+        pygame.draw.rect(sh, (0, 0, 0, 90), (5, 7, pw, ph), border_radius=24)
+        screen.blit(sh, (px - 5, py - 3))
+
+        # Panel body with gradient
+        panel = alpha_surf(pw, ph)
+        c1 = (35, 40, 65)
+        c2 = (22, 25, 45)
+        for row in range(ph):
+            t = row / ph
+            r = int(c1[0]*(1-t) + c2[0]*t)
+            g = int(c1[1]*(1-t) + c2[1]*t)
+            b = int(c1[2]*(1-t) + c2[2]*t)
+            pygame.draw.line(panel, (r, g, b, 240), (0, row), (pw, row))
+        mask = alpha_surf(pw, ph)
+        pygame.draw.rect(mask, (255,255,255), (0,0,pw,ph), border_radius=24)
+        panel.blit(mask, (0,0), special_flags=pygame.BLEND_RGBA_MIN)
+        screen.blit(panel, (px, py))
+
+        # Border
+        pygame.draw.rect(screen, (60, 65, 90, 180), (px, py, pw, ph), 1, border_radius=24)
+
+        # Inner glow at top
+        glow = alpha_surf(pw - 20, 40)
+        pygame.draw.rect(glow, (255, 255, 255, 8), (0, 0, pw - 20, 40), border_radius=20)
+        screen.blit(glow, (px + 10, py + 5))
+
+        # Title
+        title = FONT_TITLE.render("Level Complete!", True, (110, 230, 140))
+        screen.blit(title, (SW//2 - title.get_width()//2, py + 30))
+
+        # Stars
+        stars = self.calc_stars()
+        star_w = 36
+        total_sw = star_w * 3 + 16 * 2
+        star_sx = SW // 2 - total_sw // 2
+        for i in range(3):
+            sx = star_sx + i * (star_w + 16)
+            sy = py + 90
+            # Animate stars appearing
+            delay = i * 0.15
+            if self.win_t - 0.25 > delay:
+                img = assets.star_on if i < stars else assets.star_off
+                # Scale bounce
+                elapsed = self.win_t - 0.25 - delay
+                sc = min(1, elapsed * 5)
+                sc = 1 + 0.3 * max(0, 1 - elapsed * 3)  # Bounce
+                sw = int(star_w * sc)
+                sh_s = int(star_w * sc)
+                scaled = pygame.transform.smoothscale(img, (sw, sh_s))
+                screen.blit(scaled, (sx + star_w//2 - sw//2, sy + star_w//2 - sh_s//2))
+
+        # Moves
+        mt = FONT_MED.render(f"Moves: {self.moves}", True, (190, 195, 215))
+        screen.blit(mt, (SW//2 - mt.get_width()//2, py + 150))
+
+        # Reward
+        reward = stars * 15
+        screen.blit(assets.coin_icon, (SW//2 - 50, py + 185))
+        rt = FONT_BIG.render(f"+ {reward}", True, (255, 215, 0))
+        screen.blit(rt, (SW//2 - 18, py + 187))
+
+        # Buttons
+        mouse = pygame.mouse.get_pos()
+        bw, bh = 145, 50
+        gap = 14
+        bx1 = SW//2 - bw - gap//2
+        bx2 = SW//2 + gap//2
+        by = py + 270
+
+        next_btn = BigButton(bx1, by, bw, bh, "Next", (60, 175, 95))
+        replay_btn = BigButton(bx2, by, bw, bh, "Replay", (50, 60, 90))
+
+        next_btn.update(mouse, dt)
+        replay_btn.update(mouse, dt)
+        next_btn.draw(screen)
+        replay_btn.draw(screen)
+
+        # Double coins button
+        dcb_rect = pygame.Rect(SW//2 - 80, by + 65, 160, 36)
+        dcb_hover = dcb_rect.collidepoint(mouse)
+        dcb_c = (85, 65, 110) if not dcb_hover else (105, 80, 130)
+        draw_pill = alpha_surf(160, 36)
+        pygame.draw.rect(draw_pill, (*dcb_c, 220), (0, 0, 160, 36), border_radius=18)
+        screen.blit(draw_pill, dcb_rect.topleft)
+        ad_t = FONT_XS.render("Watch Ad x2", True, (220, 200, 255))
+        screen.blit(ad_t, (dcb_rect.centerx - ad_t.get_width()//2,
+                           dcb_rect.centery - ad_t.get_height()//2))
+
+        return next_btn.rect, replay_btn.rect
+
+    def draw_menu(self, dt):
+        self.menu_t += dt
+        screen.blit(assets.bg, (0, 0))
+
+        # Floating bg particles
+        if random.random() < 0.08:
+            c = random.choice(list(COLORS.values()))
+            self.particles.append(Particle(
+                random.randint(0, SW), SH + 5, c,
+                random.uniform(-0.3, 0.3), random.uniform(-1, -0.4),
+                random.uniform(2, 4), gravity=False))
+
+        for p in self.particles:
+            p.draw(screen)
+
+        # App badge
+        badge = FONT_XS.render("SUPER GAME APP", True, (80, 85, 110))
+        screen.blit(badge, (SW//2 - badge.get_width()//2, 120))
+
+        # Title
+        t1 = FONT_HERO.render("Water Sort", True, (230, 235, 255))
+        screen.blit(t1, (SW//2 - t1.get_width()//2, 145))
+        t2 = FONT_TITLE.render("Puzzle", True, (90, 170, 230))
+        screen.blit(t2, (SW//2 - t2.get_width()//2, 200))
+
+        # Preview tubes
+        preview_tubes = [[1,1,1,1],[2,2,2,2],[3,3,3,3],[4,4,4,4],[5,5,5,5]]
+        ptw = len(preview_tubes) * (TW + 14) - 14
+        psx = (SW - ptw) // 2
+        for i, pt in enumerate(preview_tubes):
+            tx = psx + i * (TW + 14)
+            ty = 280 + int(math.sin(self.menu_t * 1.8 + i * 0.9) * 10)
+            surf = render_tube(pt, False, True)
+            screen.blit(surf, (tx - 14, ty - 29))
+
+        # Play button
+        play = BigButton(SW//2 - 110, 520, 220, 60, "P L A Y", (55, 185, 105))
+        mouse = pygame.mouse.get_pos()
+        play.update(mouse, dt)
+        play.draw(screen)
+
+        # Level info
+        li = FONT_SM.render(f"Level {self.level}", True, (120, 125, 155))
+        screen.blit(li, (SW//2 - li.get_width()//2, 600))
+
+        # Coins
+        screen.blit(assets.coin_icon, (SW//2 - 45, 635))
+        ci = FONT_MED.render(str(self.coins), True, (255, 215, 0))
+        screen.blit(ci, (SW//2 - 13, 638))
+
+        # Footer
+        ft = FONT_XXS.render("Tap PLAY to start", True, (50, 54, 75))
+        screen.blit(ft, (SW//2 - ft.get_width()//2, SH - 35))
+
+        return play.rect
 
     # ─── MAIN LOOP ───
 
     def run(self):
         running = True
+        play_btn = None
         next_btn = None
         replay_btn = None
-        play_btn = None
 
         while running:
-            dt = self.clock.tick(FPS) / 1000.0
+            dt = self.clock.tick(FPS) / 1000.0 if hasattr(self, 'clock') else clock.tick(FPS) / 1000.0
             mouse = pygame.mouse.get_pos()
 
-            # ─── EVENTS ───
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
                     running = False
 
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                if ev.type == pygame.KEYDOWN:
+                    if ev.key == pygame.K_ESCAPE:
                         if self.state == "playing":
                             self.state = "menu"
-                        elif self.state == "menu":
+                        else:
                             running = False
-                    if event.key == pygame.K_u and self.state == "playing":
+                    if ev.key == pygame.K_u and self.state == "playing":
                         self.undo()
-                    if event.key == pygame.K_r and self.state == "playing":
+                    if ev.key == pygame.K_r and self.state == "playing":
                         self.load_level(self.level)
 
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                     if self.state == "menu":
                         if play_btn and play_btn.collidepoint(mouse):
                             self.load_level(self.level)
 
-                    elif self.state == "playing" and not self.pouring:
+                    elif self.state == "playing" and not self.pour.active:
                         handled = False
                         for name, btn in self.buttons.items():
                             if btn.clicked(mouse):
-                                if name == "undo":
-                                    self.undo()
-                                elif name == "restart":
-                                    self.load_level(self.level)
-                                elif name == "hint":
-                                    pass  # TODO: hint system
-                                elif name == "menu":
-                                    self.state = "menu"
+                                if name == 'undo': self.undo()
+                                elif name == 'restart': self.load_level(self.level)
+                                elif name == 'back': self.state = "menu"
                                 handled = True
                                 break
 
                         if not handled:
-                            clicked = self.get_tube_at(*mouse)
-                            if clicked >= 0:
+                            ci = self.get_tube_at(*mouse)
+                            if ci >= 0:
                                 if self.selected == -1:
-                                    # Select if tube has liquid
-                                    if self.tubes[clicked]:
-                                        self.selected = clicked
-                                elif self.selected == clicked:
-                                    # Deselect
+                                    if self.tubes[ci]:
+                                        self.selected = ci
+                                        self.tube_cache = {}
+                                elif self.selected == ci:
                                     self.selected = -1
+                                    self.tube_cache = {}
                                 else:
-                                    # Try pour
-                                    if self.can_pour(self.selected, clicked):
-                                        self.start_pour_animation(self.selected, clicked)
+                                    if self.can_pour(self.selected, ci):
+                                        src = self.selected
                                         self.selected = -1
+                                        self.tube_cache = {}
+                                        self.pour.start(src, ci)
+                                    elif self.tubes[ci]:
+                                        self.selected = ci
+                                        self.tube_cache = {}
                                     else:
-                                        # Select new tube if it has liquid
-                                        if self.tubes[clicked]:
-                                            self.selected = clicked
-                                        else:
-                                            self.selected = -1
+                                        self.selected = -1
+                                        self.tube_cache = {}
 
                     elif self.state == "complete":
                         if next_btn and next_btn.collidepoint(mouse):
-                            self.coins += self.calculate_stars() * 10
+                            self.coins += self.calc_stars() * 15
                             self.load_level(self.level + 1)
                         elif replay_btn and replay_btn.collidepoint(mouse):
                             self.load_level(self.level)
 
             # ─── UPDATE ───
-            self.update_pour(dt)
+            if self.pour.active:
+                done = self.pour.update(dt, self.positions, self.tubes,
+                                        lambda: self.do_pour(self.pour.src, self.pour.dst))
+                if done:
+                    self.tube_cache = {}
+                    if self.check_win():
+                        self.state = "complete"
+                        self.win_t = 0
+                        self.spawn_win()
+
             self.particles = [p for p in self.particles if p.update(dt)]
 
-            if self.state == "playing":
-                for btn in self.buttons.values():
-                    btn.update(mouse, dt)
-
-            # Spawn win particles continuously
-            if self.state == "complete" and self.win_timer < 3:
-                if random.random() < 0.3:
-                    c = random.choice(list(LIQUID_COLORS.values()))
+            if self.state == "complete" and self.win_t < 4:
+                if random.random() < 0.15:
+                    cols = [(255,107,107),(78,205,196),(255,230,109),(162,155,254),(255,159,243)]
+                    c = random.choice(cols)
                     self.particles.append(Particle(
-                        random.randint(100, SCREEN_WIDTH - 100),
-                        random.randint(100, SCREEN_HEIGHT - 200),
-                        c))
+                        random.randint(30, SW-30), random.randint(-20, SH//3),
+                        c, random.uniform(-2, 2), random.uniform(-3, 1),
+                        random.uniform(4, 9), shape=random.choice(['confetti','star'])))
 
             # ─── DRAW ───
             if self.state == "menu":
                 play_btn = self.draw_menu(dt)
 
-            elif self.state in ("playing", "complete"):
-                self.draw_bg()
-                self.draw_top_bar()
+            elif self.state == "playing":
+                self.draw_playing(dt)
 
-                # Difficulty label
-                colors, _ = get_difficulty(self.level)
-                diff_map = {3: "Easy", 4: "Normal", 5: "Medium", 6: "Hard",
-                            7: "Expert", 8: "Master", 9: "Insane", 10: "Legendary"}
-                diff = diff_map.get(colors, "")
-                diff_t = self.font_tiny.render(diff, True, (120, 125, 150))
-                self.screen.blit(diff_t, (SCREEN_WIDTH // 2 - diff_t.get_width() // 2, 88))
-
-                self.draw_tubes(dt)
-
-                for btn in self.buttons.values():
-                    btn.draw(self.screen)
-
-                # Controls hint
-                hint = self.font_tiny.render("U = Undo  |  R = Restart  |  ESC = Menu",
-                                             True, (45, 48, 65))
-                self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 22))
-
-                # Particles
-                for p in self.particles:
-                    p.draw(self.screen)
-
-                if self.state == "complete":
-                    next_btn, replay_btn = self.draw_complete_screen(dt)
+            elif self.state == "complete":
+                self.draw_playing(dt)
+                next_btn, replay_btn = self.draw_complete(dt)
 
             pygame.display.flip()
 
@@ -934,8 +1056,8 @@ class WaterSortGame:
         sys.exit()
 
 
-# ─────────────────────────── ENTRY POINT ───────────────────────────
+# ══════════════════════════════ RUN ══════════════════════════════
 
 if __name__ == "__main__":
-    game = WaterSortGame()
+    game = Game()
     game.run()
