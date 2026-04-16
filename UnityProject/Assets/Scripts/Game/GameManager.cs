@@ -284,6 +284,7 @@ namespace WaterSort.Game
                 );
 
                 var obj = Instantiate(bottlePrefab, bottleContainer);
+                obj.SetActive(true);
                 obj.transform.localPosition = pos;
 
                 var bottle = obj.GetComponent<Bottle>();
