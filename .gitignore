@@ -56,3 +56,19 @@ crashlytics-build.properties
 # OS
 .DS_Store
 Thumbs.db
+
+# Python (playable_demo)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
